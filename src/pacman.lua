@@ -1,3 +1,4 @@
+package.path = "/iDar/?.lua;/iDar/?/init.lua;" .. package.path
 local core = require("Pacman.helpers.core")
 
 local args = { ... }

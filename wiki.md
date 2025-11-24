@@ -276,3 +276,26 @@ pacman -S cc-calculator
 - **Checksum Validation** - File integrity checking
 - **Conditional Dependencies** - Platform-specific requirements
 - **Configuration Templates** - User setup during installation
+
+## Using iDar Libraries in Your Programs
+
+### Simple Approach (Recommended):
+
+```lua
+local bigNum = require("..iDar.BigNum.bigNum")
+local aes = require("..iDar.CryptoLib.aes")
+local sha = require("..iDar.CryptoLib.sha256")
+```
+
+### Alternative (if you prefer relative paths):
+
+```lua
+-- Configure package path once in the main file of your program
+package.path = "/iDar/?.lua;/iDar/?/init.lua;" .. package.path
+
+-- Then use relative requires
+local bigNum = require("BigNum")
+local aes = require("idar-cryptolib.aes")
+```
+
+**Why absolute paths?** CC:Tweaked's sandboxing resets `package.path` for each program. Absolute paths always work.

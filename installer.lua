@@ -147,6 +147,7 @@ local function ensurePersistentAlias()
         return
     end
 
+    shell.setAlias("pacman", pacman_path)
     return true
 end
 
