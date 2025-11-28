@@ -10,9 +10,26 @@
 
 ### The Three Pillars of SATD
 
-1. **Registry** - Central package database (iDar-Pacman-DB)
-2. **Manifest** - Package metadata and instructions (`manifest.lua`)
-3. **Repository** - GitHub-hosted package content with versioned tags
+1.  **Registry** - Central package database (`iDar-Pacman-DB` and `sources.lua`).
+2.  **Manifest** - Package metadata and instructions (`manifest.lua`).
+3.  **Repository** - GitHub-hosted package content with versioned tags.
+
+## iDar-Pacman Usage Guide
+
+### Available Commands
+
+Based on the current implementation (`pacman.lua`), these are the supported operations:
+
+| Command                 | Description                                                                             |
+| :---------------------- | :-------------------------------------------------------------------------------------- |
+| `pacman -S <package>`   | Install one or more specific packages.                                                  |
+| `pacman -Syy`           | Force synchronization of package databases (downloads `.lua` and verifies `.sum`).      |
+| `pacman -Syu`           | Synchronize databases and perform a full system upgrade to the latest versions.         |
+| `pacman -Ss <query>`    | Search for packages in the synchronized database.                                       |
+| `pacman -R <package>`   | Remove a package (keeps its dependencies).                                              |
+| `pacman -Rns <package>` | Remove a package and its dependencies if they are no longer needed (recursive cleanup). |
+| `pacman -Q`             | List all installed packages and their versions.                                         |
+| `pacman -Qtdq`          | List "orphan" packages (installed dependencies that are no longer required).            |
 
 ## Package Structure Specification
 
@@ -41,15 +58,10 @@ my-package-repo/
 
 ### URL Schema
 
-SATD uses a standardized URL pattern for package retrieval:
+SATD uses a standardized URL pattern for package retrieval directly from GitHub Raw:
 
 ```lua
--- Base URL template
-"https://raw.githubusercontent.com/{developer}/{repo}/refs/tags/{version}/"
-
--- Examples
-"https://raw.githubusercontent.com/DarThunder/bigNum/refs/tags/v2.0.1/"
-"https://raw.githubusercontent.com/SomeDev/cc-utils/refs/tags/v1.5.0/"
+"[https://raw.githubusercontent.com/](https://raw.githubusercontent.com/){developer}/{repo}/refs/tags/{version}/"
 ```
 
 ## Manifest Specification
@@ -59,13 +71,18 @@ SATD uses a standardized URL pattern for package retrieval:
 ```lua
 return {
     -- Installation directory under /iDar/
+    -- Example: will be installed in /iDar/MyPackage
     directory = "MyPackage",
 
     -- Files to download (relative to repo root)
     files = {
-        "main.lua",
-        "lib/utils.lua",
-        "config/default.conf"
+        ["main.lua"] = true,
+        lib = {
+            ["utils.lua"] = true
+        },
+        config = {
+            ["default.conf"] = true
+        }
     },
 
     -- Package dependencies
@@ -76,63 +93,60 @@ return {
 }
 ```
 
-### Optional Fields
+### Optional Fields and Hooks
+
+The system now supports post-installation hooks managed by `fake_root`.
 
 ```lua
 return {
     -- ... required fields ...
 
-    -- Package metadata
-    description = "A cool package that does things",
+    description = "A cool package",
     author = "YourName",
-    license = "MIT",
 
-    -- Installation hooks (future)
-    pre_install = function() print("Preparing installation...") end,
-    post_install = function() print("Installation complete!") end
+    -- Installation Hooks (Executed in a fakeroot environment)
+    hooks = {
+        {
+            name = "setup_config",
+            script = [[
+                -- This script has limited access to the file system (fs)
+                -- It can only write inside the temporary installation directory.
+                local config = { theme = "dark" }
+                local f = fs.open("/iDar/MyPackage/config.lua", "w")
+                f.write(textutils.serialize(config))
+                f.close()
+                print("Configuration generated.")
+            ]]
+        }
+    }
 }
 ```
 
-### Manifest Sandboxing Rules
+### Sandboxing Rules
 
-SATD manifests run in a **restricted environment** with the following limitations:
+There are two security levels in SATD:
 
-#### **Allowed Operations:**
+#### 1\. Manifest Sandboxing (`manifest.lua`)
 
-- Table creation and manipulation
-- Basic Lua functions (`print`, `type`, `pairs`, etc.)
-- String operations
-- Mathematical operations
+When loading the manifest to resolve dependencies, the environment is **strictly restricted**:
 
-#### **Blocked Operations:**
+- **Allowed:** Table manipulation, strings, basic math.
+- **Blocked:** `fs.*`, `http.*`, `os.*`, `shell.*`.
+- **Timeout:** 0.05 seconds.
 
-```lua
--- FILESYSTEM ACCESS
-fs.open()      -- ❌ No file access
-fs.delete()    -- ❌ No deletion
-fs.makeDir()   -- ❌ No directory creation
+#### 2\. Hook Sandboxing (`fake_root`)
 
--- NETWORK ACCESS
-http.get()     -- ❌ No network calls
+During post-installation, scripts defined in `hooks` run in a `fake_root` environment:
 
--- SYSTEM ACCESS
-os.run()       -- ❌ No program execution
-shell.run()    -- ❌ No shell commands
-
--- UNRESTRICTED CODE
-loadstring()   -- ❌ No dynamic code loading
-debug.*        -- ❌ No debug functions
-```
-
-#### **Timeout Protection:**
-
-Manifests must execute within **0.05 seconds** or are automatically terminated.
+- **Virtualized File System:** Calls to `fs.*` are redirected to `/iDar/tmp/<session_id>/root/`.
+- **Atomic Commit:** Changes are only moved to the real system if the hook completes successfully.
+- **Timeout:** 5 seconds.
 
 ## Registry Specification
 
 ### Package Entry Format
 
-Each package in `iDar-Pacman-DB/registry.lua` follows this structure:
+Each package in `iDar-Pacman-DB` or external sources follows this structure:
 
 ```lua
 return {
@@ -141,20 +155,72 @@ return {
         package_name = "repo-name",
         latest = "v1.0.0",
 
-        -- Installation tracking (managed by pacman)
-        installed = true/false,
-        installed_version = "v1.0.0"
-    },
-
-    ["bigNum"] = {
-        developer = "DarThunder",
-        package_name = "bigNum",
-        latest = "v2.0.1",
-        installed = true,
-        installed_version = "v2.0.1"
+        -- Data managed locally by pacman in /iDar/var/local.lua
+        -- installed = true,
+        -- package_type = "explicit" | "implicit"
     }
 }
 ```
+
+## Repository and Source Management
+
+iDar-Pacman is not limited to a single central repository. The system supports multiple package sources (third-party or private repositories) through a configuration file.
+
+### Configuration File
+
+**Location:** `/iDar/etc/sources.lua`
+
+This file returns a Lua table containing the list of active repositories. Pacman will iterate through this list when executing `pacman -Syy` or `pacman -Syu`.
+
+### Source Structure
+
+To register a new repository, add a new table with the following fields:
+
+- **name**: A unique local identifier for the repository (used for cache files in `/iDar/var/sync/`).
+- **url**: Direct (Raw) link to the remote repository's `registry.lua` file.
+- **checksum**: Direct (Raw) link to the remote repository's `.sum` (SHA256) file for integrity verification before downloading the database.
+
+### Configuration Example
+
+```lua
+return {
+    -- Core Repository (Official)
+    {
+        name = "core",
+        url = "https://raw.githubusercontent.com/DarThunder/iDar-Pacman-DB/main/registry.lua",
+        checksum = "https://raw.githubusercontent.com/DarThunder/iDar-Pacman-DB/main/registry.sum"
+    },
+
+    -- Community Repository (Example)
+    {
+        name = "community",
+        url = "https://raw.githubusercontent.com/AnotherUser/My-CC-Repo/main/registry.lua",
+        checksum = "https://raw.githubusercontent.com/AnotherUser/My-CC-Repo/main/registry.sum"
+    },
+
+    -- Corporate Repository (Example)
+    {
+        name = "corporate",
+        url = "https://raw.githubusercontent.com/MyCompany/Private-Packages/main/registry.lua",
+        checksum = "https://raw.githubusercontent.com/MyCompany/Private-Packages/main/registry.sum"
+    }
+}
+```
+
+### Usage Notes
+
+- **Security**: Only use repositories from trusted sources
+- **Cache Management**: Each repository creates separate cache files (`/iDar/var/sync/{name}.lua` and `/iDar/var/sync/{name}.sum`)
+- **Update Required**: After adding a new source, you **must** run `pacman -Syy` to download the database and checksum for the first time
+- **Priority**: Packages are searched in the order repositories are listed (first match wins)
+
+### Checksum Verification
+
+The checksum file should contain a SHA256 hash of the registry.lua file. Pacman uses this to ensure database integrity and prevent corrupted or tampered downloads.
+
+---
+
+**Note**: This multi-repository architecture enables enterprise deployments, community package sharing, and development/testing environments while maintaining the security model of the original design.
 
 ## Package Development Guide
 
@@ -163,11 +229,8 @@ return {
 #### Step 1: Repository Setup
 
 ```bash
-# Create your GitHub repository
 git init my-package
 cd my-package
-
-# Add required files
 touch manifest.lua
 mkdir src
 ```
@@ -179,8 +242,9 @@ mkdir src
 return {
     directory = "my-package",
     files = {
-        "src/main.lua",
-        "src/utils.lua"
+        ["src"] = {
+            "main.lua"
+        }
     },
     dependencies = {
         { name = "idar-bignum", version = "v2.0.1" }
@@ -192,110 +256,52 @@ return {
 #### Step 3: Version and Release
 
 ```bash
-# Commit and tag your release
 git add .
 git commit -m "Initial release"
 git tag v1.0.0
 git push origin main --tags
 ```
 
-#### Step 4: Submit to Registry
+#### Step 4: Publish
 
-Create a PR to **[iDar-Pacman-DB](https://github.com/DarThunder/iDar-Pacman-DB)** with your package entry.
+Add your package to `iDar-Pacman-DB` or configure it in your own `sources.lua`.
 
 ## Security Model
 
 ### Trust Chain
 
-```
-GitHub (Content) → SATD Manifest (Metadata) → iDar-Pacman (Verification) → User
-```
-
-### Protection Mechanisms
-
-1. **Sandboxed Manifest Execution** - No arbitrary code execution during dependency resolution
-2. **Content Integrity** - HTTPS + GitHub integrity
-3. **Timeout Protection** - Prevents infinite loops in manifests
-4. **Registry Curation** - Manual approval process
+1.  **Source Integrity:** HTTPS + GitHub ensure content is not altered in transit.
+2.  **Database Integrity:** `pacman` verifies the checksum (`.sum`) of remote databases before synchronizing.
+3.  **Safe Execution:**
+    - Manifests cannot touch the disk or network.
+    - Installation scripts (hooks) cannot damage the file system outside their assigned directory thanks to `fake_root`.
 
 ## Error Handling
 
 ### Common SATD Errors
 
-```lua
--- Missing required field
-ERROR: Manifest missing required field 'directory'
-
--- Invalid file reference
-ERROR: File 'nonexistent.lua' listed in manifest but not found in repo
-
--- Sandbox violation
-ERROR: Manifest attempted to call restricted function: fs.open
-
--- Timeout
-ERROR: Manifest took too long without yielding
-
--- Dependency resolution
-ERROR: Circular dependency detected: package-a → package-b → package-a
-```
-
-## Examples
-
-### Complete Working Example
-
-**Repository:** `https://github.com/ExampleUser/cc-calculator`
-
-**manifest.lua:**
-
-```lua
-return {
-    directory = "calculator",
-    files = {
-        "calculator.lua",
-        "lib/math_ops.lua"
-    },
-    dependencies = {
-        { name = "idar-bignum", version = "v2.0.1" }
-    },
-    description = "A scientific calculator for CC:Tweaked",
-    author = "ExampleUser"
-}
-```
-
-**Installation:**
-
-```bash
-pacman -S cc-calculator
-```
+- **Circular dependency detected:** `solver.lua` detected a loop (A depends on B, B depends on A).
+- **Manifest took too long:** The manifest or a hook exceeded its execution time limit.
+- **HTTP Error:** Failed to download from GitHub (check connection or tag existence).
 
 ## Future Extensions
 
-### Planned SATD Features
+### Planned Features (TODO)
 
-- **Digital Signatures** - Package verification via GPG
-- **Checksum Validation** - File integrity checking
-- **Conditional Dependencies** - Platform-specific requirements
-- **Configuration Templates** - User setup during installation
+- **Digital Signatures (GPG):** Cryptographic verification of the package author.
+- **Conditional Dependencies:** Platform-specific requirements (e.g., "requires: advanced_computer").
+- **Interactive Configuration Templates:** User-guided setup during installation (wizard).
+
+_(Note: Installation Hooks and basic database integrity validation have already been implemented)._
 
 ## Using iDar Libraries in Your Programs
 
-### Simple Approach (Recommended):
+Because CC:Tweaked resets `package.path`, it is recommended to use absolute paths or configure the path at the start:
 
 ```lua
-local bigNum = require("..iDar.BigNum.bigNum")
-local aes = require("..iDar.CryptoLib.aes")
-local sha = require("..iDar.CryptoLib.sha256")
-```
-
-### Alternative (if you prefer relative paths):
-
-```lua
--- Configure package path once in the main file of your program
+-- Configure path at the start of your program
 package.path = "/iDar/?.lua;/iDar/?/init.lua;" .. package.path
 
--- Then use relative requires
-local bigNum = require("BigNum")
-local aes = require("idar-cryptolib.aes")
+-- Require using relative names
+local bigNum = require("Bignum.BigNum")
 ```
-
-**Why absolute paths?** CC:Tweaked's sandboxing resets `package.path` for each program. Absolute paths always work.

@@ -1,6 +1,7 @@
 local text_utils = require("Pacman.utils.text_utils")
 
 local fetcher = {}
+local _, total_y = term.getSize()
 
 local function get_checked_response(url)
     local response = http.get(url)
@@ -36,8 +37,13 @@ function fetcher.download_raw_progress(name, url)
         text_utils.render_progress(name, downloaded, total, start_time)
         os.sleep(0.1 + math.random() * 0.3)
     end
-    local x, y = term.getCursorPos()
-    term.setCursorPos(1, y + 1)
+    local _, y = term.getCursorPos()
+    if y == total_y then
+        term.scroll(1)
+        term.setCursorPos(1, y)
+    else
+        term.setCursorPos(1, y + 1)
+    end
 
     response.close()
 

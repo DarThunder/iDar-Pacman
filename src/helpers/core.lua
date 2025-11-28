@@ -3,92 +3,167 @@ local registry = require("Pacman.helpers.registry")
 local manifest = require("Pacman.helpers.manifest")
 local text_utils = require("Pacman.utils.text_utils")
 local fs_utils = require("Pacman.utils.fs_utils")
+local solver = require("Pacman.helpers.solver")
+local fake_root = require("Pacman.helpers.fake_root")
+local installer = require("Pacman.helpers.installer")
 
 local pacman = {}
-local REGISTRY_URL = "https://raw.githubusercontent.com/DarThunder/iDar-Pacman-DB/main/registry.lua"
-local REGISTRY_CACHE = "/iDar/var/registry.cache"
 
-function pacman.update()
-    local last_remote_db = fs_utils.read_file(REGISTRY_CACHE) or ""
-    local success, raw_binary = text_utils.run_safe(fetcher.download_raw, "Error: can't download the database.", REGISTRY_URL)
+local function fetch_manifest_deps(name, version)
+    local url = registry.get_manifest_url(name, version)
+    local success, raw_manifest = text_utils.run_safe(fetcher.download_raw, "Error: can't download manifest of package '" .. name .. "'.", url)
 
-    if not success or not raw_binary then return false end
-    if last_remote_db == raw_binary then
-        print(" core is up to date")
-    else
-        print(" downloading core...")
-        fs_utils.write_file(REGISTRY_CACHE, raw_binary)
-        registry.update(raw_binary)
+    if not success then return false end
+
+    success, _ = text_utils.run_safe(manifest.load, "Error: can't load manifest of package '" .. name .. "'.", name, raw_manifest)
+
+    if not success then return false end
+
+    if registry.is_installed(name) and registry.get_installed_version(name) == version then
+        print("warning: " .. name .. " is up to date -- reinstalling")
+        os.sleep(0.1)
     end
+
+    return manifest.get_dependencies(name)
 end
 
-function pacman.install(packages)
-    print(":: Resolving dependencies...")
-    for _, package in ipairs(packages) do
-        local name = package.name
-        local version = package.version
-        local url = registry.get_manifest_url(name, version)
-        local success, raw_manifest = text_utils.run_safe(fetcher.download_raw, "Error: can't download manifest of package '" .. name .. "'.", url)
+function pacman.update()
+    local sources = dofile("/iDar/etc/sources.lua")
 
-        if not success then return false end
+    if not fs.exists("/iDar/var/sync") then fs.makeDir("/iDar/var/sync") end
 
-        success, _ = text_utils.run_safe(manifest.load, "Error: can't load manifest of package '" .. name .. "'.", name, raw_manifest)
+    local sync_ok = true
 
-        if not success then return false end
+    for _, source in ipairs(sources) do
+        local db_path = fs_utils.combine("/iDar/var/sync", source.name .. ".lua")
+        local sum_path = fs_utils.combine("/iDar/var/sync", source.name .. ".sum")
+        local success, remote_sum = text_utils.run_safe(fetcher.download_raw, "Error: can't fetch database checksum.", source.checksum)
 
-        if registry.is_installed(name) and registry.get_installed_version(name) == version then
-            print("warning: " .. name .. " is up to date -- reinstalling")
-            os.sleep(0.1)
+        if not success or not remote_sum then 
+            sync_ok = false
+            goto continue_loop
         end
 
-        for _, dependencie in ipairs(manifest.get_dependencies(name)) do
-            if not packages[dependencie.name] then
-                if not registry.is_installed(dependencie.name) then
-                    table.insert(packages, {version = dependencie.version, name = dependencie.name})
-                    packages[dependencie.name] = true
-                end
+        remote_sum = remote_sum:gsub("%s+", "")
+        local local_sum = fs_utils.read_file(sum_path)
+
+        if local_sum then local_sum = local_sum:gsub("%s+", "") end
+        if local_sum == remote_sum and fs.exists(db_path) then
+            print(" " .. source.name .." is up to date ")
+            goto continue_loop
+        end
+
+        local success, content = text_utils.run_safe(fetcher.download_raw_progress, "Error fetching " .. source.name, source.name, source.url)
+
+        if success then
+            fs_utils.write_file(db_path, content)
+            fs_utils.write_file(sum_path, remote_sum)
+        else
+            sync_ok = false
+        end
+
+        ::continue_loop::
+    end
+
+    registry.reload()
+    return sync_ok
+end
+
+function pacman.install(initial_targets)
+    local explicit_map = {}
+    for _, t in ipairs(initial_targets) do
+        explicit_map[t.name] = true
+    end
+    local dependency_map = {}
+    local to_scan = {}
+
+    for _, t in ipairs(initial_targets) do
+        table.insert(to_scan, t)
+    end
+
+    print(":: Resolving dependencies...")
+    local i = 1
+
+    while i <= #to_scan do
+        local pkg = to_scan[i]
+        local name = pkg.name
+
+        if not dependency_map[name] then
+            local deps = fetch_manifest_deps(name, pkg.version)
+
+            if not deps then return false end
+
+            dependency_map[name] = {
+                name = name,
+                version = pkg.version,
+                deps = {}
+            }
+
+            for _, dep in ipairs(deps) do
+                table.insert(dependency_map[name].deps, dep.name)
+                table.insert(to_scan, {name = dep.name, version = dep.version})
             end
         end
+        i = i + 1
+    end
+
+    local graph_input = {}
+
+    for _, data in pairs(dependency_map) do
+        table.insert(graph_input, data)
+    end
+
+    local packages_sorted, err = solver.solve_dependencies(graph_input)
+
+    if not packages_sorted then
+        print("Error: " .. err)
+        return false
     end
 
     local pkg_list = {}
 
-    for _, pkg in ipairs(packages) do
+    for _, pkg in ipairs(packages_sorted) do
         table.insert(pkg_list, pkg.name .. "-" .. (pkg.version or "latest"))
     end
 
-    print("") 
-    print("Packages (" .. #packages .. ") " .. table.concat(pkg_list, "  "))
-    print("")
-
-    term.write(":: Proceed with installation? [Y/n] ")
+    print("\nPackages (" .. #packages_sorted .. ") " .. table.concat(pkg_list, "  "))
+    term.write("\n:: Proceed with installation? [Y/n] ")
     local input = read()
 
     if input:lower() == "n" then
-        print("")
-        print("error: operation canceled")
+        print("\nError: operation canceled")
         return false
     end
 
-    print("")
+    local session_id = tostring(math.random(1000000))
 
-    print(":: Getting the packages...")
-    for _, package in ipairs(packages) do
+    print("\n:: Getting the packages...")
+
+    for _, package in ipairs(packages_sorted) do
         local name = package.name
         local version = package.version
         local url = registry.get_package_url(name, version)
         local manifest_files = manifest.get_files(name)
+
         local success, raw_files = text_utils.run_safe(fetcher.download_packages, "Error: can't download files of package '" .. package.name .. "'.", url, manifest_files)
 
-        if not success or not raw_files then return false end
+        if not success or not raw_files then
+            fake_root.rollback(session_id)
+            return false
+        end
 
-        registry.set_installed(name, version)
-        for file_index, file in ipairs(raw_files) do
-            fs_utils.write_file(fs_utils.combine("iDar", manifest.get_directory(name) .. "/" .. manifest_files[file_index]), file)
+        local is_explicit = explicit_map[package.name] ~= nil
+        success, err = text_utils.run_safe(installer.install_package, "Error installing package '" .. name .. "'.", package, raw_files, session_id, is_explicit)
+
+        if not success then
+            fake_root.rollback(session_id)
+            return false
         end
     end
 
-    print("Installation complete!")
+    fake_root.rollback(session_id)
+
+    return true
 end
 
 function pacman.upgrade()
@@ -97,14 +172,12 @@ function pacman.upgrade()
     local db = registry.get_all_packages()
 
     for name, info in pairs(db) do
-        if info.installed then
-            local current = info.installed_version
-            local latest = info.latest
+        local current = info.installed_version
+        local latest = registry.get_package_info(name).latest
 
-            if current ~= latest and current ~= "latest" then
-                print("Update available for " .. name .. ": " .. current .. " -> " .. latest)
-                table.insert(to_update, {name = name, version = latest})
-            end
+        if current ~= latest then
+            print("Update available for " .. name .. ": " .. current .. " -> " .. latest)
+            table.insert(to_update, {name = name, version = latest})
         end
     end
 
@@ -115,41 +188,53 @@ function pacman.upgrade()
     end
 end
 
-function pacman.remove(targets)
-    if #targets == 0 then return end
-
+function pacman.remove(targets, keep_deps)
     print(":: checking dependencies...")
-    -- TODO later (maybe lmao)
+    local to_remove = {}
+    local to_remove_set = {}
+    local dep_candidates = {}
 
-    print(":: Packages to remove (" .. #targets .. "): " .. table.concat(targets, " "))
+    for _, pkg_name in ipairs(targets) do
+        if registry.is_installed(pkg_name) then
+            table.insert(to_remove, pkg_name)
+            to_remove_set[pkg_name] = true
 
-    term.write(":: Do you want to remove these packages? [Y/n] ")
-    local input = read()
-    if input:lower() == "n" then
-        print("error: operation canceled")
-        return
-    end
+            local info = registry.get_package_info(pkg_name)
+            local deps = info.dependencies or {}
 
-    for _, name in ipairs(targets) do
-        if not registry.is_installed(name) then
-            print("error: target not found: " .. name)
-        else
-            print("removing " .. name .. "...")
-
-            local info = registry.get_package_info(name)
-            local dir = info.directory or name
-            local full_path = fs_utils.combine("iDar", dir)
-
-            if fs.exists(full_path) then
-                fs.delete(full_path)
-                print("  -> deleted " .. full_path)
+            for _, dep in ipairs(deps) do
+                dep_candidates[dep.name] = true
             end
-
-            registry.set_uninstalled(name)
         end
     end
-    print(":: Processing package changes...")
-    print("(1/1) purging core cache...")
+
+    if not keep_deps then
+        for dep_name, _ in pairs(dep_candidates) do
+            local is_used = false
+
+            for other_pkg, other_info in pairs(registry.get_all_packages()) do
+                if not to_remove_set[other_pkg] then
+                    local other_deps = other_info.dependencies or {}
+                    for _, other_dep in ipairs(other_deps) do
+                        if other_dep.name == dep_name then
+                            is_used = true
+                            break
+                        end
+                    end
+                end
+                if is_used then break end
+            end
+
+            if not is_used then
+                if not to_remove_set[dep_name] then
+                    table.insert(to_remove, dep_name)
+                    to_remove_set[dep_name] = true
+                end
+            end
+        end
+    end
+
+    return installer.remove_package(to_remove)
 end
 
 function pacman.search(query)
@@ -159,7 +244,7 @@ function pacman.search(query)
     for name, info in pairs(db) do
         if name:find(query) then
             local status = info.installed and " [installed]" or ""
-            local version = info.version or "latest"
+            local version = info[info.installed_version] or info.installed_version or info.latest
 
             print("core/" .. name .. " " .. version .. status)
             found = true
@@ -167,16 +252,44 @@ function pacman.search(query)
     end
 
     if not found then
-        print("error: no targets found: " .. query)
+        print("Error: no targets found: " .. query)
     end
 end
 
-function pacman.info()
+function pacman.list()
     local db = registry.get_all_packages()
     for name, info in pairs(db) do
-        if info.installed then
-            print(name .. " " .. (info.installed_version or "unknown"))
+        print(name .. " " .. (info.installed_version or "unknown"))
+    end
+end
+
+function pacman.list_orphans()
+    local orphans = {}
+    local all_packages = registry.get_all_packages()
+
+    for pkg_name, info in pairs(all_packages) do
+        if info.package_type == "implicit" then
+            local is_orphan = true
+
+            for _, other_info in pairs(all_packages) do
+                local deps = other_info.dependencies or {}
+                    for _, dep in ipairs(deps) do
+                        if dep.name == pkg_name then
+                            is_orphan = false
+                            break
+                        end
+                    end
+                if not is_orphan then break end
+            end
+
+            if is_orphan then
+                table.insert(orphans, pkg_name)
+            end
         end
+    end
+
+    for _, name in pairs(orphans) do
+        print(name .. " " .. (all_packages[name][registry.get_installed_version(name)] or registry.get_installed_version(name)))
     end
 end
 

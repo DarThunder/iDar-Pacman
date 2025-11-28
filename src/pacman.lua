@@ -73,10 +73,25 @@ elseif flag == "-R" then
         print("Error: No target specified.")
         return
     end
-    core.remove(targets_to_remove)
+    core.remove(targets_to_remove, true)
+
+elseif flag == "-Rns" then
+    local targets_to_remove = {}
+    for i = 2, #args do
+        table.insert(targets_to_remove, args[i])
+    end
+
+    if #targets_to_remove == 0 then
+        print("Error: No target specified.")
+        return
+    end
+    core.remove(targets_to_remove, false)
 
 elseif flag == "-Q" then
-    core.info()
+    core.list()
+
+elseif flag == "-Qtdq" then
+    core.list_orphans()
 
 else
     print("Error: Flag '" .. flag .. "' invalida.")

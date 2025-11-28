@@ -1,5 +1,8 @@
 local REPO_URL = "https://raw.githubusercontent.com/DarThunder/iDar-Pacman/main/src/"
+local CORE_DB_URL = "https://raw.githubusercontent.com/DarThunder/iDar-Pacman-DB/main/src/registry.lua"
+local CORE_CHECKSUM_URL = "https://raw.githubusercontent.com/DarThunder/iDar-Pacman-DB/main/src/registry.sum"
 local INSTALL_DIR = "/iDar/Pacman"
+local ETC_DIR = "/iDar/etc"
 local VAR_DIR = "/iDar/var"
 local FILESYSTEM_BASE = "/iDar"
 
@@ -8,18 +11,22 @@ local DIRS = {
     INSTALL_DIR,
     INSTALL_DIR .. "/helpers",
     INSTALL_DIR .. "/utils",
-    VAR_DIR
+    VAR_DIR,
+    VAR_DIR .. "/sync",
+    ETC_DIR
 }
 
 local FILES = {
     ["pacman.lua"] = INSTALL_DIR .. "/pacman.lua",
     ["helpers/core.lua"] = INSTALL_DIR .. "/helpers/core.lua",
+    ["helpers/fake_root.lua"] = INSTALL_DIR .. "/helpers/fake_root.lua",
     ["helpers/fetcher.lua"] = INSTALL_DIR .. "/helpers/fetcher.lua",
+    ["helpers/installer.lua"] = INSTALL_DIR .. "/helpers/installer.lua",
     ["helpers/manifest.lua"] = INSTALL_DIR .. "/helpers/manifest.lua",
     ["helpers/registry.lua"] = INSTALL_DIR .. "/helpers/registry.lua",
-    ["helpers/installer.lua"] = INSTALL_DIR .. "/helpers/installer.lua",
+    ["helpers/solver.lua"] = INSTALL_DIR .. "/helpers/solver.lua",
     ["utils/fs_utils.lua"] = INSTALL_DIR .. "/utils/fs_utils.lua",
-    ["utils/text_utils.lua"] = INSTALL_DIR .. "/utils/text_utils.lua"
+    ["utils/text_utils.lua"] = INSTALL_DIR .. "/utils/text_utils.lua",
 }
 
 local function write_file(path, content)
@@ -97,17 +104,14 @@ end
 
 if not success then
     print("WARNING: One or more main files failed to download. Operation aborted.")
+    fs.delete(FILESYSTEM_BASE)
     return
 end
 
 print(":: Initializing system files...")
 
-if write_file(VAR_DIR .. "/registry.cache", "") then
-    print("   - Created: registry.cache")
-end
-
-if write_file(VAR_DIR .. "/registry.lua", "return {}") then
-    print("   - Created: registry.lua")
+if write_file(ETC_DIR .. "/sources.lua", string.format("return {name = \"%s\", url = \"%s\", checksum = \"%s\"}", "core", CORE_DB_URL, CORE_CHECKSUM_URL)) then
+    print("   - Created: core.lua")
 end
 
 local pacman_path = INSTALL_DIR .. "/pacman.lua"

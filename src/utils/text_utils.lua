@@ -46,7 +46,7 @@ function text_utils.render_progress(name, downloaded, total, start_time)
         )
     end
 
-    local x, y = term.getCursorPos()
+    local _, y = term.getCursorPos()
     term.setCursorPos(1, y)
     term.clearLine()
     term.write(output_str)
