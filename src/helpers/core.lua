@@ -19,7 +19,15 @@ local function fetch_manifest_deps(name, version)
 
     if not success then return false end
 
-    if registry.is_installed(name) and registry.get_installed_version(name) == version then
+    local resolved_version = version
+    if version == "latest" then
+        local info = registry.get_package_info(name)
+        if info and info.latest then
+            resolved_version = info.latest
+        end
+    end
+
+    if registry.is_installed(name) and registry.get_installed_version(name) == resolved_version then
         print("warning: " .. name .. " is up to date -- reinstalling")
         os.sleep(0.1)
     end
@@ -238,7 +246,7 @@ function pacman.remove(targets, keep_deps)
 end
 
 function pacman.search(query)
-    local db = registry.get_all_packages()
+    local db = registry.get_all_packages_sync()
     local found = false
 
     for name, info in pairs(db) do

@@ -1,6 +1,6 @@
-local REPO_URL = "https://raw.githubusercontent.com/DarThunder/iDar-Pacman/main/src/"
-local CORE_DB_URL = "https://raw.githubusercontent.com/DarThunder/iDar-Pacman-DB/main/src/registry.lua"
-local CORE_CHECKSUM_URL = "https://raw.githubusercontent.com/DarThunder/iDar-Pacman-DB/main/src/registry.sum"
+local REPO_URL = "https://raw.githubusercontent.com/DarThunder/iDar-Pacman/refs/heads/main/src/"
+local CORE_DB_URL = "https://raw.githubusercontent.com/DarThunder/iDar-Pacman-DB/refs/heads/main/registry.lua"
+local CORE_CHECKSUM_URL = "https://raw.githubusercontent.com/DarThunder/iDar-Pacman-DB/refs/heads/main/registry.sum"
 local INSTALL_DIR = "/iDar/Pacman"
 local ETC_DIR = "/iDar/etc"
 local VAR_DIR = "/iDar/var"
@@ -110,7 +110,7 @@ end
 
 print(":: Initializing system files...")
 
-if write_file(ETC_DIR .. "/sources.lua", string.format("return {name = \"%s\", url = \"%s\", checksum = \"%s\"}", "core", CORE_DB_URL, CORE_CHECKSUM_URL)) then
+if write_file(ETC_DIR .. "/sources.lua", string.format("return {{name = \"%s\", url = \"%s\", checksum = \"%s\"}}", "core", CORE_DB_URL, CORE_CHECKSUM_URL)) then
     print("   - Created: core.lua")
 end
 

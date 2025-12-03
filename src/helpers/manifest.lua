@@ -1,25 +1,34 @@
 local manifest = {}
 local manifests = {}
 
-local function flatten_file_structure(node, current_path, file_list)
-    current_path = current_path or ""
-    file_list = file_list or {}
+local function flatten_paths(tree)
+    local result = {}
 
-    for name, value in pairs(node) do
-        local full_path = current_path .. name
+    local function traverse(node, path)
+        for key, value in pairs(node) do
+            if type(key) == "string" then
+                local current_path = path .. key .. "/"
 
-        if type(value) == "table" and name ~= "dependencies" then
-            flatten_file_structure(value, full_path .. "/", file_list)
+                if type(value) == "table" then
+                    traverse(value, current_path)
+                else
+                    table.insert(result, current_path .. value)
+                end
+            end
+        end
 
-        elseif type(value) == "boolean" and value == true then
-            table.insert(file_list, full_path)
-
-        elseif type(value) == "string" and value == "file" then
-            table.insert(file_list, full_path)
+        if type(node) == "table" then
+            for i = 1, #node do
+                local item = node[i]
+                if type(item) == "string" then
+                    table.insert(result, path .. item)
+                end
+            end
         end
     end
 
-    return file_list
+    traverse(tree, "")
+    return result
 end
 
 function manifest.load(package, raw_manifest)
@@ -52,7 +61,7 @@ end
 
 function manifest.get_files(package_name)
     local files = manifests[package_name].files or {}
-    return flatten_file_structure(files)
+    return flatten_paths(files)
 end
 
 function manifest.get_dependencies(package_name)

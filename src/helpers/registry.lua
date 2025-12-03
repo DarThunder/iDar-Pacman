@@ -74,12 +74,25 @@ end
 function registry.get_installed_version(package_name)
     ensure_loaded()
     if not local_db[package_name] then return nil end
-    return local_db[package_name].version
+    return local_db[package_name].installed_version
 end
 
 function registry.get_all_packages()
     ensure_loaded()
     return local_db
+end
+
+function registry.get_all_packages_sync()
+    ensure_loaded()
+    local packages = {}
+
+    for _, db_entry in ipairs(sync_dbs) do
+        for name, info in pairs(db_entry.data) do
+            packages[name] = info
+        end
+    end
+
+    return packages
 end
 
 function registry.get_package_info(name)

@@ -6,6 +6,15 @@
 
 > _"Like pacman for Arch, but for turtles - and with more Lua sandboxing."_
 
+## Version Compatibility
+
+| SATD Version | iDar-Pacman Version | Status         |
+| ------------ | ------------------- | -------------- |
+| SATD v2.x    | v2.0.0+             | **Current**    |
+| SATD v1.x    | v1.x.x              | **Deprecated** |
+
+> ⚠️ **SATD v1 is no longer supported.** All new packages must use SATD v2.
+
 ## Core Concepts
 
 ### The Three Pillars of SATD
@@ -76,12 +85,12 @@ return {
 
     -- Files to download (relative to repo root)
     files = {
-        ["main.lua"] = true,
+        "main.lua",
         lib = {
-            ["utils.lua"] = true
+            "utils.lua"
         },
         config = {
-            ["default.conf"] = true
+            "default.conf"
         }
     },
 
@@ -151,7 +160,7 @@ Each package in `iDar-Pacman-DB` or external sources follows this structure:
 ```lua
 return {
     ["package-name"] = {
-        developer = "GitHubUsername",
+        dev = "GitHubUsername",
         package_name = "repo-name",
         latest = "v1.0.0",
 

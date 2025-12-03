@@ -1,6 +1,6 @@
 # iDar-Pacman
 
-![State: Alpha v2.0.0](https://img.shields.io/badge/State-Alpha_v2.0.0-orange)
+![State: Alpha v2.0.1](https://img.shields.io/badge/State-Alpha_v2.0.1-orange)
 
 **The definitive package manager for ComputerCraft: Tweaked.**
 
@@ -37,7 +37,7 @@ It serves as the backbone of the **iDar Ecosystem**, ensuring that libraries lik
 To bootstrap **iDar-Pacman** on your computer or turtle, run the following command:
 
 ```lua
-wget run [https://raw.githubusercontent.com/DarThunder/iDar-Pacman/refs/heads/main/installer.lua](https://raw.githubusercontent.com/DarThunder/iDar-Pacman/refs/heads/main/installer.lua)
+wget run https://raw.githubusercontent.com/DarThunder/iDar-Pacman/refs/heads/main/installer.lua
 ```
 
 _Note: This will install the base system and create the necessary directory structures._
