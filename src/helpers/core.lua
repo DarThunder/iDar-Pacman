@@ -1,11 +1,11 @@
-local fetcher = require("Pacman.helpers.fetcher")
-local registry = require("Pacman.helpers.registry")
-local manifest = require("Pacman.helpers.manifest")
-local text_utils = require("Pacman.utils.text_utils")
-local fs_utils = require("Pacman.utils.fs_utils")
-local solver = require("Pacman.helpers.solver")
-local fake_root = require("Pacman.helpers.fake_root")
-local installer = require("Pacman.helpers.installer")
+local fetcher = require("opt.Pacman.helpers.fetcher")
+local registry = require("opt.Pacman.helpers.registry")
+local manifest = require("opt.Pacman.helpers.manifest")
+local text_utils = require("opt.Pacman.utils.text_utils")
+local fs_utils = require("opt.Pacman.utils.fs_utils")
+local solver = require("opt.Pacman.helpers.solver")
+local fake_root = require("opt.Pacman.helpers.fake_root")
+local installer = require("opt.Pacman.helpers.installer")
 
 local pacman = {}
 
@@ -36,18 +36,18 @@ local function fetch_manifest_deps(name, version)
 end
 
 function pacman.update()
-    local sources = dofile("/iDar/etc/sources.lua")
+    local sources = sys.dofile("/etc/sources.lua")
 
-    if not fs.exists("/iDar/var/sync") then fs.makeDir("/iDar/var/sync") end
+    if not sys.exists("/var/sync") then sys.mkdir("/var/sync") end
 
     local sync_ok = true
 
     for _, source in ipairs(sources) do
-        local db_path = fs_utils.combine("/iDar/var/sync", source.name .. ".lua")
-        local sum_path = fs_utils.combine("/iDar/var/sync", source.name .. ".sum")
+        local db_path = fs_utils.combine("/var/sync", source.name .. ".lua")
+        local sum_path = fs_utils.combine("/var/sync", source.name .. ".sum")
         local success, remote_sum = text_utils.run_safe(fetcher.download_raw, "Error: can't fetch database checksum.", source.checksum)
 
-        if not success or not remote_sum then 
+        if not success or not remote_sum then
             sync_ok = false
             goto continue_loop
         end
@@ -56,7 +56,7 @@ function pacman.update()
         local local_sum = fs_utils.read_file(sum_path)
 
         if local_sum then local_sum = local_sum:gsub("%s+", "") end
-        if local_sum == remote_sum and fs.exists(db_path) then
+        if local_sum == remote_sum and sys.exists(db_path) then
             print(" " .. source.name .." is up to date ")
             goto continue_loop
         end
@@ -135,8 +135,7 @@ function pacman.install(initial_targets)
     end
 
     print("\nPackages (" .. #packages_sorted .. ") " .. table.concat(pkg_list, "  "))
-    term.write("\n:: Proceed with installation? [Y/n] ")
-    local input = read()
+    local input = read(":: Proceed with installation? [Y/n] ", colors.white, {})
 
     if input:lower() == "n" then
         print("\nError: operation canceled")
@@ -267,7 +266,9 @@ end
 function pacman.list()
     local db = registry.get_all_packages()
     for name, info in pairs(db) do
-        print(name .. " " .. (info.installed_version or "unknown"))
+        if info.installed_version then
+            print(name .. " " .. info.installed_version)
+        end
     end
 end
 

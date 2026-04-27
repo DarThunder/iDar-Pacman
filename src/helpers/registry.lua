@@ -1,15 +1,15 @@
-local fs_utils = require("Pacman.utils.fs_utils")
+local fs_utils = require("opt.Pacman.utils.fs_utils")
 local registry = {}
 
 local local_db = {}
 local sync_dbs = {}
 local loaded = false
 
-local LOCAL_DB_PATH = "/iDar/var/local.lua"
-local SYNC_DIR = "/iDar/var/sync/"
+local LOCAL_DB_PATH = "/var/local.lua"
+local SYNC_DIR = "/var/sync/"
 
 local function load_local_db()
-    if fs.exists(LOCAL_DB_PATH) then
+    if sys.exists(LOCAL_DB_PATH) then
         local content = fs_utils.read_file(LOCAL_DB_PATH)
         local func = load(content, "local_db", "t", {})
         if func then local_db = func() end
@@ -20,11 +20,11 @@ end
 
 local function load_sync_dbs()
     sync_dbs = {}
-    local sources = dofile("/iDar/etc/sources.lua")
+    local sources = sys.dofile("/etc/sources.lua")
 
     for _, source in ipairs(sources) do
-        local path = fs.combine(SYNC_DIR, source.name .. ".lua")
-        if fs.exists(path) then
+        local path = sys.combine(SYNC_DIR, source.name .. ".lua")
+        if sys.exists(path) then
             local content = fs_utils.read_file(path)
             local func = load(content, source.name, "t", {})
             if func then
@@ -148,6 +148,9 @@ function registry.set_uninstalled(package_name)
         local_db[package_name].package_type = nil
         local_db[package_name].dependencies = nil
         local_db[package_name].install_dir = nil
+        local_db[package_name].installed_at = nil
+        local_db[package_name].bin = nil
+        local_db[package_name] = nil
         dump_local()
     end
 end

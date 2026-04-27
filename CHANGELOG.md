@@ -93,3 +93,20 @@ This release deeply integrates iDar-Pacman with the iDar Shell ecosystem by auto
 #### Cleanup & Maintenance
 
 - **Smart Dead-link Purge:** The removal process (`pacman -R` and `-Rns`) has been overhauled to read the local registry and automatically delete the associated `.ptr` files from `/iDar/bin/`. This guarantees a completely clean filesystem with no orphaned or dead commands left behind.
+
+### v2.2.0
+
+**"The FHS & SATD v2.6 Update"**
+
+A massive architectural overhaul that brings iDar-Pacman closer to a true Linux environment by dropping the monolithic `/iDar/` structure in favor of standard Filesystem Hierarchy Standard (FHS) paths.
+
+#### Core System & Architecture
+
+- **FHS Compliance:** The `/iDar/` root directory has been completely retired. The system now uses global standard Linux directories: `/lib/`, `/opt/`, `/bin/`, `/etc/`, `/var/`, and `/tmp/`.
+- **Smart Package Routing:** The installer now intelligently routes package destinations. If a package declares executable commands via a `bin` table, it is automatically installed into `/opt/`. Pure libraries are routed to `/lib/`.
+- **Path Adjustments:** All internal references, temporary sandboxes (`FakeRoot`), databases, and configuration files have been migrated to their proper global locations (e.g., `/etc/sources.lua` and `/var/local.lua`).
+
+#### Manifest & Standards
+
+- **SATD v2.6 Introduced:** Officially upgraded the packaging standard to v2.6, enforcing FHS-compliant paths and modernizing the manifest syntax.
+- **Modern Flat File Maps:** The `files` table inside `manifest.lua` has been refactored. It now uses a much cleaner, flat dictionary mapping (`["local/destination/path"] = "remote/source/path"`) instead of the old nested-table approach, vastly simplifying package development.

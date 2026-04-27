@@ -1,54 +1,34 @@
 local manifest = {}
 local manifests = {}
 
-local function flatten_paths(tree)
-    local result = {}
+function manifest.load(package, raw_manifest)
+    local tmp_file = "/tmp/manifest_" .. package .. ".lua"
+    local fd = sys.open(tmp_file, "w")
 
-    local function traverse(node, path)
-        for key, value in pairs(node) do
-            if type(key) == "string" then
-                local current_path = path .. key .. "/"
+    if not fd then error("Error: cannot load file descriptor") end
 
-                if type(value) == "table" then
-                    traverse(value, current_path)
-                else
-                    table.insert(result, current_path .. value)
-                end
-            end
-        end
+    sys.write(fd, raw_manifest)
+    sys.close(fd)
 
-        if type(node) == "table" then
-            for i = 1, #node do
-                local item = node[i]
-                if type(item) == "string" then
-                    table.insert(result, path .. item)
-                end
-            end
-        end
+    local pid = sys.spawn(tmp_file)
+
+    local died_naturally, reason = sys.wait(pid, 0.05)
+    sys.delete(tmp_file)
+
+    if not died_naturally and reason == "timeout" then
+        sys.kill(pid)
+        error("Error: Manifest took too long without yielding (possible malicious loop).")
     end
 
-    traverse(tree, "")
-    return result
-end
-
-function manifest.load(package, raw_manifest)
     local sandbox = {}
     local func, err = load(raw_manifest, nil, "t", sandbox)
 
-    if not func then error("Error: invalid manifest: " .. err) end
+    if not func then error("Error: invalid manifest syntax: " .. tostring(err)) end
 
-    local start = os.clock()
-    local function killer()
-        if os.clock() - start > 0.05 then
-            error("Error: manifest took too long without yielding")
-        end
-    end
-    debug.sethook(killer, "", 10000)
     local ok, res = pcall(func)
-    debug.sethook()
 
-    if not ok then error("Error: can't execute manifest: " .. res) end
-    if type(res) ~= "table" then error("Error: manifest it must be a table") end
+    if not ok then error("Error: runtime error in manifest: " .. tostring(res)) end
+    if type(res) ~= "table" then error("Error: manifest must return a table") end
 
     manifests[package] = res
 
@@ -60,8 +40,7 @@ function manifest.get_directory(package_name)
 end
 
 function manifest.get_files(package_name)
-    local files = manifests[package_name].files or {}
-    return flatten_paths(files)
+    return manifests[package_name].files or {}
 end
 
 function manifest.get_dependencies(package_name)

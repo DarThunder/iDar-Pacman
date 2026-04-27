@@ -2,19 +2,19 @@
 
 ## Introduction
 
-**SATD (Standard Automated Template Download)** is the packaging standard that powers iDar-Pacman. It defines how packages are structured, distributed, and installed across the CC:Tweaked ecosystem.
+**SATD (Standard Automated Template Download)** is the packaging standard that powers iDar-Pacman within the **iDar-Loom Microkernel** ecosystem. It defines how packages are structured, distributed, and safely installed across CC:Tweaked computers running the Loom kernel.
 
-> _"Like pacman for Arch, but for turtles - and with more Lua sandboxing."_
+> _"Like pacman for Arch, but for turtles - and powered by kernel-level sandboxing."_
 
 ## Version Compatibility
 
 | SATD Version | iDar-Pacman Version | Status         |
 | ------------ | ------------------- | -------------- |
-| SATD v2.5.x  | v2.1.0+             | **Current**    |
-| SATD v2.x    | v2.0.0+             | Stable         |
+| SATD v2.6.x  | v2.2.0+             | **Current**    |
+| SATD v2.5.x  | v2.1.0              | **Deprecated** |
 | SATD v1.x    | v1.x.x              | **Deprecated** |
 
-> ⚠️ **SATD v1 is no longer supported.** All new packages must use SATD v2+.
+> ⚠️ **SATD v1 and v2.5 are no longer supported.** All new packages must use SATD v2.6+, which enforces FHS-compliant paths (`/lib`, `/opt`, `/bin`) utilizing the iDar-Loom Virtual File System (VFS).
 
 ## Core Concepts
 
@@ -57,7 +57,7 @@ latest    # Rolling release
 
 #### File Structure
 
-```
+```text
 my-package-repo/
 ├── manifest.lua          # REQUIRED - SATD manifest
 ├── src/
@@ -70,8 +70,8 @@ my-package-repo/
 
 SATD uses a standardized URL pattern for package retrieval directly from GitHub Raw:
 
-```lua
-"[https://raw.githubusercontent.com/](https://raw.githubusercontent.com/){developer}/{repo}/refs/tags/{version}/"
+```text
+https://raw.githubusercontent.com/{developer}/{repo}/refs/tags/{version}/
 ```
 
 ## Manifest Specification
@@ -80,19 +80,15 @@ SATD uses a standardized URL pattern for package retrieval directly from GitHub 
 
 ```lua
 return {
-    -- Installation directory under /iDar/
-    -- Example: will be installed in /iDar/MyPackage
+    -- Installation directory under /lib/ or /opt/ depending on whether it has binaries.
+    -- Example: will be installed in /lib/MyPackage (if it's a library)
     directory = "MyPackage",
 
-    -- Files to download (relative to repo root)
+    -- Files to download: ["local/destination"] = "remote/source/in/repo"
     files = {
-        "main.lua",
-        lib = {
-            "utils.lua"
-        },
-        config = {
-            "default.conf"
-        }
+        ["init.lua"] = "src/init.lua",
+        ["MBR.lua"] = "src/MBR.lua",
+        ["tty_daemon.lua"] = "src/tty_daemon.lua"
     },
 
     -- Package dependencies
@@ -105,7 +101,7 @@ return {
 
 ### Optional Fields and Hooks
 
-The system now supports post-installation hooks managed by `fake_root`.
+The system supports post-installation hooks managed by `fake_root`.
 
 ```lua
 return {
@@ -114,17 +110,17 @@ return {
     description = "A cool package",
     author = "YourName",
 
-    -- Installation Hooks (Executed in a fakeroot environment)
+    -- Installation Hooks (Executed in a fakeroot environment using sys.spawn)
     hooks = {
         {
             name = "setup_config",
             script = [[
-                -- This script has limited access to the file system (fs)
+                -- This script has limited access to the file system (sys)
                 -- It can only write inside the temporary installation directory.
                 local config = { theme = "dark" }
-                local f = fs.open("/iDar/MyPackage/config.lua", "w")
-                f.write(textutils.serialize(config))
-                f.close()
+                local f = sys.open("/lib/MyPackage/config.lua", "w")
+                sys.write(f, textutils.serialize(config))
+                sys.close(f)
                 print("Configuration generated.")
             ]]
         }
@@ -132,10 +128,10 @@ return {
 }
 ```
 
-### `bin` (Optional) — SATDv2.5+
+### `bin` (Optional) — SATDv2.6+
 
 Declares executable entry points for the package. Pacman will automatically
-create `.ptr` files in `/iDar/bin/` pointing to the specified scripts.
+create `.ptr` files globally in `/bin/` pointing to the specified scripts utilizing Loom's VFS links. Furthermore, declaring a `bin` table will automatically route the package installation to `/opt/` instead of `/lib/`.
 
 ```lua
 bin = {
@@ -159,23 +155,23 @@ automatically. On removal, they are cleaned up alongside the package directory.
 
 ### Sandboxing Rules
 
-There are two security levels in SATD:
+Thanks to the iDar-Loom microkernel, there are two strict security levels enforced via `sys.spawn` and the Scheduler:
 
-#### 1\. Manifest Sandboxing (`manifest.lua`)
+#### 1. Manifest Sandboxing (`manifest.lua`)
 
-When loading the manifest to resolve dependencies, the environment is **strictly restricted**:
+When loading the manifest to resolve dependencies, it is launched as a restricted child process:
 
 - **Allowed:** Table manipulation, strings, basic math.
-- **Blocked:** `fs.*`, `http.*`, `os.*`, `shell.*`.
-- **Timeout:** 0.05 seconds.
+- **Blocked:** `sys.*`, `fs.*`, `http.*`, `os.*`, `shell.*`.
+- **Enforcement:** If it exceeds 0.05 seconds of execution without yielding, the Loom kernel forces a `sys.kill`.
 
-#### 2\. Hook Sandboxing (`fake_root`)
+#### 2. Hook Sandboxing (`fake_root`)
 
-During post-installation, scripts defined in `hooks` run in a `fake_root` environment:
+During post-installation, scripts defined in `hooks` run in a strictly isolated `fake_root` process thread:
 
-- **Virtualized File System:** Calls to `fs.*` are redirected to `/iDar/tmp/<session_id>/root/`.
-- **Atomic Commit:** Changes are only moved to the real system if the hook completes successfully.
-- **Timeout:** 5 seconds.
+- **Virtualized File System:** Calls to `sys.*` methods (like `sys.open` and `sys.delete`) are intercepted and redirected to `/tmp/<session_id>/root/`.
+- **Atomic Commit:** Changes are only mapped to the real VFS (`/opt/` or `/lib/`) if the hook completes successfully.
+- **Timeout:** If the hook takes more than 5 seconds, Loom scheduler kills it automatically, triggering a rollback.
 
 ## Registry Specification
 
@@ -190,7 +186,7 @@ return {
         package_name = "repo-name",
         latest = "v1.0.0",
 
-        -- Data managed locally by pacman in /iDar/var/local.lua
+        -- Data managed locally by pacman in /var/local.lua
         -- installed = true,
         -- package_type = "explicit" | "implicit"
     }
@@ -203,7 +199,7 @@ iDar-Pacman is not limited to a single central repository. The system supports m
 
 ### Configuration File
 
-**Location:** `/iDar/etc/sources.lua`
+**Location:** `/etc/sources.lua`
 
 This file returns a Lua table containing the list of active repositories. Pacman will iterate through this list when executing `pacman -Syy` or `pacman -Syu`.
 
@@ -211,51 +207,20 @@ This file returns a Lua table containing the list of active repositories. Pacman
 
 To register a new repository, add a new table with the following fields:
 
-- **name**: A unique local identifier for the repository (used for cache files in `/iDar/var/sync/`).
+- **name**: A unique local identifier for the repository (used for cache files in `/var/sync/`).
 - **url**: Direct (Raw) link to the remote repository's `registry.lua` file.
 - **checksum**: Direct (Raw) link to the remote repository's `.sum` (SHA256) file for integrity verification before downloading the database.
 
-### Configuration Example
-
-```lua
-return {
-    -- Core Repository (Official)
-    {
-        name = "core",
-        url = "https://raw.githubusercontent.com/DarThunder/iDar-Pacman-DB/main/registry.lua",
-        checksum = "https://raw.githubusercontent.com/DarThunder/iDar-Pacman-DB/main/registry.sum"
-    },
-
-    -- Community Repository (Example)
-    {
-        name = "community",
-        url = "https://raw.githubusercontent.com/AnotherUser/My-CC-Repo/main/registry.lua",
-        checksum = "https://raw.githubusercontent.com/AnotherUser/My-CC-Repo/main/registry.sum"
-    },
-
-    -- Corporate Repository (Example)
-    {
-        name = "corporate",
-        url = "https://raw.githubusercontent.com/MyCompany/Private-Packages/main/registry.lua",
-        checksum = "https://raw.githubusercontent.com/MyCompany/Private-Packages/main/registry.sum"
-    }
-}
-```
-
 ### Usage Notes
 
-- **Security**: Only use repositories from trusted sources
-- **Cache Management**: Each repository creates separate cache files (`/iDar/var/sync/{name}.lua` and `/iDar/var/sync/{name}.sum`)
-- **Update Required**: After adding a new source, you **must** run `pacman -Syy` to download the database and checksum for the first time
-- **Priority**: Packages are searched in the order repositories are listed (first match wins)
+- **Security**: Only use repositories from trusted sources.
+- **Cache Management**: Each repository creates separate cache files (`/var/sync/{name}.lua` and `/var/sync/{name}.sum`).
+- **Update Required**: After adding a new source, you **must** run `pacman -Syy` to download the database and checksum for the first time.
+- **Priority**: Packages are searched in the order repositories are listed (first match wins).
 
 ### Checksum Verification
 
-The checksum file should contain a SHA256 hash of the registry.lua file. Pacman uses this to ensure database integrity and prevent corrupted or tampered downloads.
-
----
-
-**Note**: This multi-repository architecture enables enterprise deployments, community package sharing, and development/testing environments while maintaining the security model of the original design.
+The checksum file should contain a SHA256 hash of the `registry.lua` file. Pacman uses this to ensure database integrity and prevent corrupted or tampered downloads.
 
 ## Package Development Guide
 
@@ -277,13 +242,14 @@ mkdir src
 return {
     directory = "my-package",
     files = {
-        ["src"] = {
-            "main.lua"
-        }
+        ["init.lua"] = "src/init.lua",
     },
     dependencies = {
         { name = "idar-bignum", version = "v2.0.1" }
     },
+    bin = {
+        ["my-package"] = "/opt/my-package/init.lua",
+    }
     description = "My awesome CC:Tweaked package"
 }
 ```
@@ -307,36 +273,25 @@ Add your package to `iDar-Pacman-DB` or configure it in your own `sources.lua`.
 
 1.  **Source Integrity:** HTTPS + GitHub ensure content is not altered in transit.
 2.  **Database Integrity:** `pacman` verifies the checksum (`.sum`) of remote databases before synchronizing.
-3.  **Safe Execution:**
-    - Manifests cannot touch the disk or network.
-    - Installation scripts (hooks) cannot damage the file system outside their assigned directory thanks to `fake_root`.
+3.  **Kernel-Level Execution Safety:**
+    - Manifests are spawned in empty environments and brutally killed by the Loom Scheduler if they try to stall the system.
+    - Installation hooks (`fake_root`) are jailed within temporary VFS paths and terminated by `sys.kill` if they exceed the time slice limit.
 
 ## Error Handling
 
 ### Common SATD Errors
 
 - **Circular dependency detected:** `solver.lua` detected a loop (A depends on B, B depends on A).
-- **Manifest took too long:** The manifest or a hook exceeded its execution time limit.
+- **Manifest took too long:** Loom's Scheduler forcibly killed the manifest process thread for exceeding its execution time limit without yielding.
 - **HTTP Error:** Failed to download from GitHub (check connection or tag existence).
-
-## Future Extensions
-
-### Planned Features (TODO)
-
-- **Digital Signatures (GPG):** Cryptographic verification of the package author.
-- **Conditional Dependencies:** Platform-specific requirements (e.g., "requires: advanced_computer").
-- **Interactive Configuration Templates:** User-guided setup during installation (wizard).
-
-_(Note: Installation Hooks and basic database integrity validation have already been implemented)._
 
 ## Using iDar Libraries in Your Programs
 
-Because CC:Tweaked resets `package.path`, it is recommended to use absolute paths or configure the path at the start:
+Because CC:Tweaked resets `package.path`, and since iDar-Pacman now installs pure libraries globally into the Loom VFS `/lib/`, it is recommended to configure your path at the start of your userland code:
 
 ```lua
--- Configure path at the start of your program
-package.path = "/iDar/?.lua;/iDar/?/init.lua;" .. package.path
-
--- Require using relative names
+-- No configuration needed! Loom's custom require resolver
+-- automatically searches /lib/ and /opt/ before the default paths.
+-- Just require directly:
 local bigNum = require("Bignum.BigNum")
 ```

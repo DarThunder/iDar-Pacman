@@ -1,4 +1,4 @@
-local text_utils = require("Pacman.utils.text_utils")
+local text_utils = require("opt.Pacman.utils.text_utils")
 
 local fetcher = {}
 local _, total_y = term.getSize()
@@ -64,8 +64,8 @@ end
 function fetcher.download_packages(url, file_list)
     local raw_files = {}
 
-    for index, file in ipairs(file_list) do
-        raw_files[index] = fetcher.download_raw_progress(file, url .. file)
+    for local_path, remote_path in pairs(file_list) do
+        raw_files[local_path] = fetcher.download_raw_progress(local_path, url .. remote_path)
     end
 
     return raw_files

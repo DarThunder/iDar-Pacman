@@ -1,20 +1,24 @@
-local fs_utils = require("Pacman.utils.fs_utils")
-local manifest = require("Pacman.helpers.manifest")
-local fake_root = require("Pacman.helpers.fake_root")
-local registry = require("Pacman.helpers.registry")
+local fs_utils = require("opt.Pacman.utils.fs_utils")
+local manifest = require("opt.Pacman.helpers.manifest")
+local fake_root = require("opt.Pacman.helpers.fake_root")
+local registry = require("opt.Pacman.helpers.registry")
 
 local installer = {}
 
 function installer.install_package(package, raw_files, session_id, is_explicit)
     local name = package.name
     local version = package.version
+    local bin = manifest.get_bin(name)
 
-    local staging_dir = "/iDar/tmp/" .. session_id .. "/root"
-    local manifest_files = manifest.get_files(name)
+    local staging_dir = "/tmp/" .. session_id .. "/root"
 
-    for file_index, file_content in ipairs(raw_files) do
-        local real_rel_path = fs_utils.combine("iDar", manifest.get_directory(name) .. "/" .. manifest_files[file_index])
+    for local_path, file_content in pairs(raw_files) do
+        local real_rel_path = manifest.get_directory(name) .. "/" .. local_path
         local temp_path = fs_utils.combine(staging_dir, real_rel_path)
+        
+        local folder = sys.get_dir(temp_path)
+        if not sys.exists(folder) then sys.mkdir(folder) end
+        
         fs_utils.write_file(temp_path, file_content)
     end
 
@@ -31,16 +35,15 @@ function installer.install_package(package, raw_files, session_id, is_explicit)
         end
     end
 
-    fake_root.commit(session_id, manifest.get_directory(name))
+    fake_root.commit(session_id, manifest.get_directory(name), bin)
 
-    local bin = manifest.get_bin(name)
     for cmd, rel_path in pairs(bin) do
-        local ptr_path = "/iDar/bin/" .. cmd .. ".ptr"
-        local full_path = "/iDar/" .. manifest.get_directory(name) .. "/" .. rel_path
-        local f = io.open(ptr_path, "w")
-        if f then
-            f:write(full_path)
-            f:close()
+        local ptr_path = "/bin/" .. cmd .. ".ptr"
+        local full_path = "/opt/" .. manifest.get_directory(name) .. "/" .. rel_path
+        local fd = sys.open(ptr_path, "w")
+        if fd then
+            sys.write(fd, full_path)
+            sys.close(fd)
         end
     end
 
@@ -56,7 +59,7 @@ function installer.install_package(package, raw_files, session_id, is_explicit)
         installed_version,
         is_explicit,
         deps,
-        manifest.get_directory(name),
+        (#bin > 0 and "/opt/" or "/lib/") .. manifest.get_directory(name),
         bin
     )
 
@@ -68,8 +71,7 @@ function installer.remove_package(targets)
 
     print(":: Packages to remove (" .. #targets .. "): " .. table.concat(targets, " "))
 
-    term.write(":: Do you want to remove these packages? [Y/n] ")
-    local input = read()
+    local input = read(":: Do you want to remove these packages? [Y/n] ", colors.white, {})
     if input:lower() == "n" then
         print("Error: operation canceled")
         return
@@ -79,18 +81,17 @@ function installer.remove_package(targets)
             print("removing " .. name .. "...")
 
             local dir = registry.get_installed_dir(name)
-            local full_path = fs_utils.combine("iDar", dir)
 
-            if fs.exists(full_path) then
-                fs.delete(full_path)
-                print("  -> deleted " .. full_path)
+            if sys.exists(dir) then
+                sys.delete(dir)
+                print("  -> deleted " .. dir)
             end
 
             local bin = registry.get_installed_bin(name)
             for cmd, _ in pairs(bin) do
-                local ptr_path = "/iDar/bin/" .. cmd .. ".ptr"
-                if fs.exists(ptr_path) then
-                    fs.delete(ptr_path)
+                local ptr_path = "/bin/" .. cmd .. ".ptr"
+                if sys.exists(ptr_path) then
+                    sys.delete(ptr_path)
                 end
             end
 

@@ -1,5 +1,4 @@
-package.path = "/iDar/?.lua;/iDar/?/init.lua;" .. package.path
-local core = require("Pacman.helpers.core")
+local core = require("opt.Pacman.helpers.core")
 
 local args = { ... }
 local flag = args[1]
@@ -37,8 +36,8 @@ end
 
 if flag == "-S" then
     if #targets == 0 then
-        print("Error: Faltan argumentos.")
-        print("Uso: pacman -S nombre_paquete")
+        sys.write(2, "Error: Missing arguments.\n")
+        print("Use: pacman -S package_name")
         return
     end
 
@@ -58,7 +57,7 @@ elseif flag == "-Syu" then
 elseif flag == "-Ss" then
     local query = args[2]
     if not query then
-        print("Error: No search query specified.")
+        sys.write(2, "Error: No search query specified.\n")
         return
     end
     core.search(query)
@@ -70,7 +69,7 @@ elseif flag == "-R" then
     end
 
     if #targets_to_remove == 0 then
-        print("Error: No target specified.")
+        sys.write(2, "Error: No target specified.\n")
         return
     end
     core.remove(targets_to_remove, true)
@@ -82,7 +81,7 @@ elseif flag == "-Rns" then
     end
 
     if #targets_to_remove == 0 then
-        print("Error: No target specified.")
+        sys.write(2, "Error: No target specified.\n")
         return
     end
     core.remove(targets_to_remove, false)
@@ -94,6 +93,6 @@ elseif flag == "-Qtdq" then
     core.list_orphans()
 
 else
-    print("Error: Flag '" .. flag .. "' invalida.")
+    sys.write(2, "Error: Invalid flag '" .. flag .. "'.\n")
     printUsage()
 end
